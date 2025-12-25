@@ -1,0 +1,46 @@
+📝 [Bug复盘] OJ沙箱判题超时(ExitCode 143)与死锁问题分析1. 问题描述 (The Problem)在开发 Online Judge (OJ) 系统的 Java 原生代码沙箱 (Native Code Sandbox) 时，提交 ACM 模式（使用 Scanner 读取输入）的代码进行判题，遇到了以下异常情况：现象：第 1 组简单测试用例可以通过（ExitValue=0）。后续测试用例（尤其是多行输入或稍复杂的输入）全部判为 超时。报错信息：控制台日志显示：运行失败，错误码： 143。伴随异常堆栈：java.io.IOException: Stream closed。初步误区：起初认为是数据库数据没更新，或者是代码算法效率低。但实际上，即使是空逻辑的代码也会超时，说明问题出在沙箱机制本身。2. 根本原因分析 (Root Cause Analysis)问题的核心在于 “沙箱喂数据的方式” 与 “用户代码吃数据的方式” 不匹配，导致了 进程死锁 (Deadlock)。2.1 两种输入模式的冲突模式描述典型场景命令行参数 (Args)启动程序时，将数据拼接到命令末尾。java Main 1 2 3你的旧沙箱代码使用 String.format("... Main %s", args) 传参。标准输入流 (Stdin)程序启动后，通过输入流管道喂数据。Scanner sc = new Scanner(System.in);用户的提交代码ACM 模式标准写法，等待键盘/流输入。2.2 死锁是如何发生的？当沙箱用“命令行参数”的方式去运行一个“等待标准输入”的 Java 程序时，发生了以下连锁反应：沙箱 (父进程)：执行命令 java Main <参数>。沙箱认为数据已经通过参数传过去了，于是开始调用 process.waitFor()，阻塞等待子进程运行结束。用户代码 (子进程)：程序启动，执行 scanner.nextInt()。因为代码里写的是 System.in，它根本不看命令行参数，而是死死盯着标准输入流。僵局 (Deadlock)：子进程发现输入流里没数据（因为沙箱没往流里写东西），于是一直等待 (Block)。父进程在等子进程结束。结果：父子进程互相等待，谁也不动。结局：沙箱的超时控制线程（Timeout Thread）达到设定时间（如 5000ms），判定超时，发送 SIGTERM 信号强制杀死子进程（Exit Code 143）。3. 解决方案 (The Solution)将沙箱的执行模式从 “命令行传参” 彻底重构为 “交互式流输入”。3.1 核心代码修改文件： JavaCodeSandboxTemplate.java修改点 1：启动命令不再带参数Java// ❌ 修改前（错误）：把 args 拼在命令后面，导致输入流为空
+// String runCmd = String.format("java ... Main %s", userCodeParentPath, inputArgs);
+
+// ✅ 修改后（正确）：只启动主程序，不带数据参数
+String runCmd = String.format("java -Xmx256m -Dfile.encoding=UTF-8 -cp %s Main", userCodeParentPath);
+修改点 2：使用交互式工具类执行JavaProcess runProcess = Runtime.getRuntime().exec(runCmd);
+
+// ❌ 修改前：普通执行，不进行流交互
+// ExecuteMessage executeMessage = ProcessUtils.runProcessAndGetMessage(runProcess, "运行");
+
+// ✅ 修改后：交互式执行，通过 OutputStream 喂数据
+ExecuteMessage executeMessage = ProcessUtils.runInteractProcessAndGetMessage(runProcess, inputArgs);
+3.2 工具类实现细节文件： ProcessUtils.java必须确保在写入数据后 关闭输出流，这是解开死锁的钥匙。Javapublic static ExecuteMessage runInteractProcessAndGetMessage(Process runProcess, String args) {
+    ExecuteMessage executeMessage = new ExecuteMessage();
+    try {
+        // 1. 获取子进程的输入流（即我们的输出流）
+        OutputStream outputStream = runProcess.getOutputStream();
+        OutputStreamWriter outputStreamWriter = new OutputStreamWriter(outputStream);
+
+        // 2. 写入数据（建议加上换行符，防止 Scanner 读不到行尾）
+        String[] s = args.split(" ");
+        String join = StrUtil.join("\n", s) + "\n";
+        outputStreamWriter.write(join);
+        
+        // 3. 刷新缓冲区
+        outputStreamWriter.flush();
+
+        // 4. 【关键的一步】：关闭输出流！
+        // 这相当于告诉子进程的 Scanner："输入结束了(EOF)"。
+        // 如果不关，Scanner 会认为后面还有数据，继续阻塞等待。
+        outputStreamWriter.close(); 
+        outputStream.close(); // 确保彻底关闭
+
+        // 5. 获取子进程的输出（略...）
+        // ...
+        
+        // 6. 等待进程正常退出
+        int exitValue = runProcess.waitFor();
+        executeMessage.setExitValue(exitValue);
+        
+    } catch (Exception e) {
+        e.printStackTrace();
+    }
+    return executeMessage;
+}
+4. 经验总结 (Key Takeaways)ACM 模式必用交互式：只要题目代码涉及 Scanner 或 System.in，判题机必须通过 OutputStream 写入数据，而不能通过命令行参数。EOF 信号至关重要：在进程交互中，writer.close() 不仅仅是释放资源，更是向子进程发送 EOF (End Of File) 信号的关键操作。没有它，读取端永远不知道何时停止。超时排查思路：遇到 OJ 判题超时（143 错误），如果确定算法复杂度没有问题，首先排查 输入/输出流是否发生了死锁。附：测试用例规范 (ACM模式)为了配合交互式输入，数据库中的判题用例应为纯数字/字符串格式，例如：Input: 4 2 7 11 15 9 (代表：长度4，数组元素2,7,11,15，目标9)Output: 0 1 (代表：下标0和1)
