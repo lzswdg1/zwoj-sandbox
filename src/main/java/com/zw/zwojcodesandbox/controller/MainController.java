@@ -1,5 +1,7 @@
 package com.zw.zwojcodesandbox.controller;
 
+import com.zw.zwojcodesandbox.CodeSandbox;
+import com.zw.zwojcodesandbox.JavaDockerCodeSandbox;
 import com.zw.zwojcodesandbox.JavaNativeCodeSandbox;
 import com.zw.zwojcodesandbox.model.ExecuteCodeRequest;
 import com.zw.zwojcodesandbox.model.ExecuteCodeResponse;
@@ -20,8 +22,10 @@ public class MainController {
 
     private static final String AUTH_REQUEST_SECRET = "secretKey";
 
-    @Resource
-    private JavaNativeCodeSandbox javaNativeCodeSandbox;
+//    @Resource
+//    private JavaNativeCodeSandbox javaNativeCodeSandbox;
+    @Resource(name = "javaDockerCodeSandbox")
+    private CodeSandbox codeSandbox;
 
     @GetMapping("/health")
     public String healthCheck() {
@@ -46,6 +50,6 @@ public class MainController {
         if (executeCodeRequest == null) {
             throw new RuntimeException("请求参数为空");
         }
-        return javaNativeCodeSandbox.executeCode(executeCodeRequest);
+        return codeSandbox.executeCode(executeCodeRequest);
     }
 }
