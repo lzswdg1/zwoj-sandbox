@@ -341,7 +341,7 @@ public class JavaDockerCodeSandbox extends JavaCodeSandboxTemplate {
                     // 兼容不同 Docker 版本的内存统计
                     Long usage = statistics.getMemoryStats().getUsage();
                     if (usage != null) {
-                        System.out.println("内存占用：" + usage);
+//                        System.out.println("内存占用：" + usage);
                         maxMemory[0] = Math.max(usage, maxMemory[0]);
                     }
                 }
@@ -384,8 +384,14 @@ public class JavaDockerCodeSandbox extends JavaCodeSandboxTemplate {
                 throw new RuntimeException(e);
             }
 
-            executeMessage.setMessage(message[0]);
-            executeMessage.setErrorMessage(errorMessage[0]);
+            // ---------------- 修改开始 ----------------
+            if (message[0] != null) {
+                executeMessage.setMessage(message[0].trim());
+            }
+            if (errorMessage[0] != null) {
+                executeMessage.setErrorMessage(errorMessage[0].trim());
+            }
+            // ---------------- 修改结束 ----------------
             executeMessage.setTime(time);
             executeMessage.setMemory(maxMemory[0]);
             executeMessageList.add(executeMessage);
